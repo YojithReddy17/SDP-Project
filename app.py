@@ -70,7 +70,7 @@ st.sidebar.markdown("Tune the AI sensitivity to prioritize building count vs. to
 threshold = st.sidebar.slider(
     "Set Detection Sensitivity:", 
     min_value=0.05, 
-    max_value=0.90, 
+    max_value=0.95, 
     value=0.50, 
     step=0.05
 )
