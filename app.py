@@ -5,120 +5,116 @@ from PIL import Image
 import torchvision.transforms.functional as TF
 import segmentation_models_pytorch as smp
 from scipy.ndimage import label
+import matplotlib.pyplot as plt
 import os
 import gdown
+import tifffile as tiff
 
 # --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="LEVIR-CD+ Change Detection", page_icon="🏙️", layout="wide")
+st.set_page_config(page_title="Urban Change Detection AI", page_icon="🏙️", layout="wide")
 
 st.title("🛰️ SOTA Urban Change Detection")
-st.markdown("""
-### DeepLabV3+ with EfficientNet-b4 Backbone
-Upload native high-resolution **LEVIR-CD+** images (Time 1 and Time 2) in **PNG** format to detect new construction.
-""")
+st.markdown("DeepLabV3+ architecture with EfficientNet-b4 backbone. Optimized for LEVIR-CD+ native resolution.")
 
-# --- 2. RESTORED MODEL LOADER (WITH DRIVE FETCH) ---
+# --- 2. ROBUST IMAGE LOADER ---
+def load_image_robust(file):
+    try:
+        img_array = tiff.imread(file)
+    except:
+        return Image.open(file).convert("RGB")
+    
+    if len(img_array.shape) == 3 and img_array.shape[-1] > 3:
+        img_array = img_array[:, :, :3]
+    if img_array.dtype == np.uint16:
+        img_array = (img_array / 65535.0 * 255).astype(np.uint8)
+    if len(img_array.shape) == 2:
+        img_array = np.stack([img_array]*3, axis=-1)
+    return Image.fromarray(img_array)
+
+# --- 3. MODEL LOADER (CACHED) ---
 @st.cache_resource
 def load_model():
     model_path = 'best_levir_deeplabv3_effb4.pth'
-    
-    # Keeping your existing Google Drive ID for the champion DeepLabV3+ model
     file_id = '1iV91GcRBVgfu39IA4CVkQ4rH_iw6W8PV' 
-    
-    # Download weights if they don't exist on the server
     if not os.path.exists(model_path):
-        with st.spinner("Downloading 150MB DeepLabV3+ model weights from Google Drive... (This takes ~30s on first boot)"):
+        with st.spinner("Fetching AI weights..."):
             gdown.download(id=file_id, output=model_path, quiet=False)
 
-    # Reinitialize the champion architecture
     model = smp.DeepLabV3Plus(
         encoder_name="efficientnet-b4",
-        encoder_weights=None, # None because we are loading custom weights
+        encoder_weights=None, 
         in_channels=6,
         classes=1,
     )
-    
-    # Load weights onto the CPU (required for free Streamlit Community Cloud)
     model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     model.eval()
     return model
 
-with st.spinner("Initializing System & Checking Weights..."):
-    model = load_model()
+model = load_model()
 
-# --- 3. SIDEBAR UPLOADERS (NORMAL FORMAT) ---
-st.sidebar.header("Data Input Panel")
-st.sidebar.info("Upload standard high-res PNG images.")
+# --- 4. SIDEBAR SETTINGS ---
+st.sidebar.header("Control Panel")
+# Interactive sensitivity slider for your demo!
+threshold = st.sidebar.slider("Detection Sensitivity", 0.1, 0.9, 0.5, 0.05)
 
-file1 = st.sidebar.file_uploader("Upload Time 1 (Before)", type=['png', 'jpg', 'jpeg'])
-file2 = st.sidebar.file_uploader("Upload Time 2 (After)", type=['png', 'jpg', 'jpeg'])
+file1 = st.sidebar.file_uploader("Upload Time 1 (Before)", type=['png', 'jpg', 'tif'])
+file2 = st.sidebar.file_uploader("Upload Time 2 (After)", type=['png', 'jpg', 'tif'])
 
-# --- 4. MAIN APPLICATION LOGIC ---
+# --- 5. MAIN LOGIC ---
 if file1 and file2:
-    
-    # Load images immediately for display
-    image1 = Image.open(file1).convert("RGB")
-    image2 = Image.open(file2).convert("RGB")
+    # Use the robust loader to handle TIF or PNG
+    image1 = load_image_robust(file1)
+    image2 = load_image_robust(file2)
     
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Time 1 (Before)")
+        st.subheader("Time 1")
         st.image(image1, use_column_width=True)
     with col2:
-        st.subheader("Time 2 (After)")
+        st.subheader("Time 2")
         st.image(image2, use_column_width=True)
         
     if st.button("🚀 Run Analysis", use_container_width=True):
-        
-        with st.spinner("Processing 6-Channel Early Fusion Tensor & Running Native Inference..."):
+        with st.spinner("Processing 0-255 Native Tensor..."):
+            # --- THE 0-255 FIX ---
+            # 1. Resize/Crop to 512x512
+            t1_img = image1.resize((512, 512))
+            t2_img = image2.resize((512, 512))
             
-            # --- RESTORED NATIVE INFERENCE PIPELINE ---
+            # 2. Convert to Numpy Float32 (Keep the 0-255 range!)
+            t1_np = np.array(t1_img).astype(np.float32)
+            t2_np = np.array(t2_img).astype(np.float32)
             
-            # 1. Resize images to 512x512. Model must infer at training dimension.
-            # This handles any input dimension and rescales it to the native model scale.
-            process_size = (512, 512)
-            t1 = TF.resize(image1, process_size)
-            t2 = TF.resize(image2, process_size)
+            # 3. Create Torch Tensors manually [3, 512, 512]
+            x1 = torch.from_numpy(t1_np).permute(2, 0, 1)
+            x2 = torch.from_numpy(t2_np).permute(2, 0, 1)
             
-            # 2. Convert to tensors
-            t1_tensor = TF.to_tensor(t1)
-            t2_tensor = TF.to_tensor(t2)
+            # 4. Stack to 6-channel Early Fusion [1, 6, 512, 512]
+            input_tensor = torch.cat([x1, x2], dim=0).unsqueeze(0)
             
-            # 3. Stack into 6 channels and add Batch Dimension [1, 6, 512, 512]
-            input_tensor = torch.cat([t1_tensor, t2_tensor], dim=0).unsqueeze(0)
-            
-            # 4. Direct Inference (Normal Format - no tiling)
+            # 5. Inference
             with torch.no_grad():
                 output = model(input_tensor)
-                # Sigmoid to convert to probabilities, threshold at 0.5
-                pred_mask = torch.sigmoid(output) > 0.5
+                probs = torch.sigmoid(output).squeeze().cpu().numpy()
+                mask = (probs > threshold).astype(np.uint8)
             
-            # Post-Processing: Convert back to Numpy
-            pred_mask_np = pred_mask.squeeze().cpu().numpy().astype(np.uint8)
+            # --- METRICS & DISPLAY ---
+            _, num_buildings = label(mask)
+            area = np.sum(mask) * 0.25 
             
-            # --- URBANIZATION METRICS ALGORITHMS ---
-            # 1. Count Buildings (Connected Components)
-            labeled_mask, num_buildings = label(pred_mask_np)
-            
-            # 2. Calculate Area
-            # LEVIR-CD+ resolution is ~0.5 meters per pixel. 1 pixel = 0.25 sq meters.
-            total_changed_pixels = np.sum(pred_mask_np)
-            estimated_sq_meters = total_changed_pixels * 0.25
-            
-            # --- DISPLAY RESULTS ---
             st.divider()
             st.subheader("📊 Analysis Results")
+            m1, m2 = st.columns(2)
+            m1.metric("Buildings Detected", num_buildings)
+            m2.metric("Est. Urbanization Area", f"{area:,.1f} m²")
             
-            # Display Metrics dynamically
-            m1, m2, m3 = st.columns(3)
-            m1.metric(label="New Buildings Detected", value=num_buildings)
-            m2.metric(label="Changed Pixels", value=f"{total_changed_pixels:,}")
-            m3.metric(label="Est. Urbanization Area", value=f"{estimated_sq_meters:,.1f} m²")
+            # Display Prediction Mask
+            fig, ax = plt.subplots(figsize=(10, 10))
+            ax.imshow(mask, cmap='gray')
+            ax.set_title(f"Change Mask (Confidence > {threshold})")
+            ax.axis('off')
+            st.pyplot(fig)
             
-            # Display Prediction Mask in black and white
-            st.subheader("DeepLabV3+ Change Mask")
-            st.image(pred_mask_np * 255, use_column_width=True, clamp=True)
-            
-            st.success("Analysis Complete! Ready for next upload.")
+            st.success("Analysis Complete!")
 else:
-    st.info("👈 Please upload both LEVIR-CD+ PNG images to begin.")
+    st.info("👈 Upload LEVIR-CD+ images in the sidebar.")
