@@ -4,7 +4,7 @@ torch
 torchvision
 segmentation-models-pytorch
 Pillow
-numpy
+numpy<2.0.0
 scipy
 matplotlib
 gdown
