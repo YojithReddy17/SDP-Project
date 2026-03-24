@@ -11,10 +11,10 @@ import gdown
 import tifffile as tiff
 
 # --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="Urban Change Detection AI", page_icon="🏙️", layout="wide")
+st.set_page_config(page_title="Urban Change Detection AI", page_icon="🛰️", layout="wide")
 
 st.title("🛰️ SOTA Urban Change Detection")
-st.markdown("DeepLabV3+ architecture with EfficientNet-b4 backbone. Optimized for LEVIR-CD+ native resolution.")
+st.markdown("DeepLabV3+ with EfficientNet-b4 backbone. Optimized for LEVIR-CD+ native resolution.")
 
 # --- 2. ROBUST IMAGE LOADER ---
 def load_image_robust(file):
@@ -54,7 +54,7 @@ model = load_model()
 
 # --- 4. SIDEBAR SETTINGS ---
 st.sidebar.header("Control Panel")
-# Interactive sensitivity slider for your demo!
+st.sidebar.markdown("Adjust sensitivity to tune the detection engine.")
 threshold = st.sidebar.slider("Detection Sensitivity", 0.1, 0.9, 0.5, 0.05)
 
 file1 = st.sidebar.file_uploader("Upload Time 1 (Before)", type=['png', 'jpg', 'tif'])
@@ -62,34 +62,32 @@ file2 = st.sidebar.file_uploader("Upload Time 2 (After)", type=['png', 'jpg', 't
 
 # --- 5. MAIN LOGIC ---
 if file1 and file2:
-    # Use the robust loader to handle TIF or PNG
     image1 = load_image_robust(file1)
     image2 = load_image_robust(file2)
     
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Time 1")
+        st.subheader("Time 1 (Before)")
         st.image(image1, use_column_width=True)
     with col2:
-        st.subheader("Time 2")
+        st.subheader("Time 2 (After)")
         st.image(image2, use_column_width=True)
         
     if st.button("🚀 Run Analysis", use_container_width=True):
-        with st.spinner("Processing 0-255 Native Tensor..."):
-            # --- THE 0-255 FIX ---
-            # 1. Resize/Crop to 512x512
+        with st.spinner("Processing 0-255 Native Tensors..."):
+            # 1. Resize for model input (Native scale)
             t1_img = image1.resize((512, 512))
             t2_img = image2.resize((512, 512))
             
-            # 2. Convert to Numpy Float32 (Keep the 0-255 range!)
+            # 2. Convert to Numpy Float32 (Keep 0-255 range)
             t1_np = np.array(t1_img).astype(np.float32)
             t2_np = np.array(t2_img).astype(np.float32)
             
-            # 3. Create Torch Tensors manually [3, 512, 512]
+            # 3. Create Tensors
             x1 = torch.from_numpy(t1_np).permute(2, 0, 1)
             x2 = torch.from_numpy(t2_np).permute(2, 0, 1)
             
-            # 4. Stack to 6-channel Early Fusion [1, 6, 512, 512]
+            # 4. Early Fusion Stack
             input_tensor = torch.cat([x1, x2], dim=0).unsqueeze(0)
             
             # 5. Inference
@@ -98,7 +96,7 @@ if file1 and file2:
                 probs = torch.sigmoid(output).squeeze().cpu().numpy()
                 mask = (probs > threshold).astype(np.uint8)
             
-            # --- METRICS & DISPLAY ---
+            # 6. Metrics Calculation
             _, num_buildings = label(mask)
             area = np.sum(mask) * 0.25 
             
@@ -108,28 +106,24 @@ if file1 and file2:
             m1.metric("Buildings Detected", num_buildings)
             m2.metric("Est. Urbanization Area", f"{area:,.1f} m²")
             
-            # Display Prediction Mask
-            # --- Replace the prediction display section in app.py with this ---
-st.subheader("AI Analysis: Building Highlights")
+            # --- THE HIGHLIGHT OVERLAY (Visual Polish) ---
+            st.subheader("AI Analysis: Building Highlights")
+            
+            # Use PIL for clean alpha blending (Yellow Overlay)
+            base = Image.fromarray(np.array(t2_img)).convert("RGBA")
+            yellow_mask = Image.new("RGBA", base.size, (255, 255, 0, 0))
+            mask_pixels = yellow_mask.load()
+            
+            for y in range(512):
+                for x in range(512):
+                    if mask[y, x] == 1:
+                        # Bright yellow with semi-transparency
+                        mask_pixels[x, y] = (255, 255, 0, 160) 
 
-# Create a colorful overlay
-img_np = np.array(image2.resize((512, 512))) # Get the 'After' image
-mask_rgb = np.zeros_like(img_np)
-mask_rgb[mask == 1] = [255, 255, 0] # Color the buildings Bright Yellow
-
-# Blend the image and the mask (0.6 alpha makes it transparent)
-overlay = cv2.addWeighted(img_np, 1.0, mask_rgb, 0.6, 0) if 'cv2' in locals() else img_np
-# If you don't have cv2 installed, we can use a simpler PIL method:
-base = Image.fromarray(img_np).convert("RGBA")
-yellow_mask = Image.new("RGBA", base.size, (255, 255, 0, 0))
-mask_pixels = yellow_mask.load()
-for y in range(512):
-    for x in range(512):
-        if mask[y, x] == 1:
-            mask_pixels[x, y] = (255, 255, 0, 150) # Yellow with 150/255 transparency
-
-combined = Image.alpha_composite(base, yellow_mask)
-
-st.image(combined, use_column_width=True, caption=f"Detection Overlay (Threshold: {threshold})")
+            combined = Image.alpha_composite(base, yellow_mask)
+            
+            st.image(combined, use_column_width=True, caption=f"Detection Overlay (Confidence Threshold: {threshold})")
+            st.success(f"Analysis Complete! Successfully identified {num_buildings} changes.")
+            
 else:
-    st.info("👈 Upload LEVIR-CD+ images in the sidebar.")
+    st.info("👈 Upload LEVIR-CD+ images in the sidebar to begin analysis.")
