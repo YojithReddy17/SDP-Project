@@ -66,7 +66,7 @@ model = load_model()
 st.sidebar.header("⚖️ Optimization Control")
 st.sidebar.markdown("Tune the AI sensitivity to prioritize building count vs. total area.")
 
-# The user-requested 0.05 to 0.90 range
+#sidebar for the tweaking of accuracy of no of buildings and area covered
 threshold = st.sidebar.slider(
     "Set Detection Sensitivity:", 
     min_value=0.05, 
