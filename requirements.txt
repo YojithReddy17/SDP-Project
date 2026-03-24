@@ -6,3 +6,4 @@ Pillow==10.2.0
 numpy==1.26.4
 scipy==1.12.0
 matplotlib==3.8.3
+gdown==5.1.0
