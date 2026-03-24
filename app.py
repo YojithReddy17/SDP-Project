@@ -109,12 +109,27 @@ if file1 and file2:
             m2.metric("Est. Urbanization Area", f"{area:,.1f} m²")
             
             # Display Prediction Mask
-            fig, ax = plt.subplots(figsize=(10, 10))
-            ax.imshow(mask, cmap='gray')
-            ax.set_title(f"Change Mask (Confidence > {threshold})")
-            ax.axis('off')
-            st.pyplot(fig)
-            
-            st.success("Analysis Complete!")
+            # --- Replace the prediction display section in app.py with this ---
+st.subheader("AI Analysis: Building Highlights")
+
+# Create a colorful overlay
+img_np = np.array(image2.resize((512, 512))) # Get the 'After' image
+mask_rgb = np.zeros_like(img_np)
+mask_rgb[mask == 1] = [255, 255, 0] # Color the buildings Bright Yellow
+
+# Blend the image and the mask (0.6 alpha makes it transparent)
+overlay = cv2.addWeighted(img_np, 1.0, mask_rgb, 0.6, 0) if 'cv2' in locals() else img_np
+# If you don't have cv2 installed, we can use a simpler PIL method:
+base = Image.fromarray(img_np).convert("RGBA")
+yellow_mask = Image.new("RGBA", base.size, (255, 255, 0, 0))
+mask_pixels = yellow_mask.load()
+for y in range(512):
+    for x in range(512):
+        if mask[y, x] == 1:
+            mask_pixels[x, y] = (255, 255, 0, 150) # Yellow with 150/255 transparency
+
+combined = Image.alpha_composite(base, yellow_mask)
+
+st.image(combined, use_column_width=True, caption=f"Detection Overlay (Threshold: {threshold})")
 else:
     st.info("👈 Upload LEVIR-CD+ images in the sidebar.")
