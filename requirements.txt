@@ -8,4 +8,4 @@ numpy<2.0.0
 scipy
 matplotlib
 gdown
-tifffile  # <--- ADD THIS
+tifffile
