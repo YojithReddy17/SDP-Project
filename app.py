@@ -8,6 +8,7 @@ from scipy.ndimage import label
 import matplotlib.pyplot as plt
 import os
 import gdown
+import tifffile as tiff
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(page_title="Urban Change Detection AI", page_icon="🏙️", layout="wide")
@@ -44,6 +45,29 @@ def load_model():
     model.eval()
     return model
 
+# Replace your image loading lines with this:
+def load_image_robust(file):
+    # Read the file using tifffile
+    img_array = tiff.imread(file)
+    
+    # 1. Handle multi-band (e.g., 4-band RGB-NIR). Keep only first 3 bands (RGB).
+    if len(img_array.shape) == 3 and img_array.shape[-1] > 3:
+        img_array = img_array[:, :, :3]
+        
+    # 2. Handle 16-bit to 8-bit normalization (Standardizes the brightness)
+    if img_array.dtype == np.uint16:
+        img_array = (img_array / 65535.0 * 255).astype(np.uint8)
+    
+    # 3. Handle grayscale (Repeat channel 3 times for RGB)
+    if len(img_array.shape) == 2:
+        img_array = np.stack([img_array]*3, axis=-1)
+
+    return Image.fromarray(img_array)
+
+
+image1 = load_image_robust(img_file1)
+image2 = load_image_robust(img_file2)
+
 with st.spinner("Initializing System & Checking Weights..."):
     model = load_model()
 
@@ -51,8 +75,8 @@ with st.spinner("Initializing System & Checking Weights..."):
 st.sidebar.header("Data Input Panel")
 st.sidebar.info("Upload standard RGB images (e.g., .png or .jpg). Images will be automatically resized for analysis.")
 
-img_file1 = st.sidebar.file_uploader("Upload Time 1 Image (Before)", type=['png', 'jpg', 'jpeg'])
-img_file2 = st.sidebar.file_uploader("Upload Time 2 Image (After)", type=['png', 'jpg', 'jpeg'])
+img_file1 = st.sidebar.file_uploader("Upload Time 1 Image (Before)", type=['png', 'jpg', 'jpeg', 'tif', 'tiff'])
+img_file2 = st.sidebar.file_uploader("Upload Time 2 Image (After)", type=['png', 'jpg', 'jpeg', 'tif', 'tiff'])
 
 # --- 4. MAIN APPLICATION LOGIC ---
 if img_file1 and img_file2:
