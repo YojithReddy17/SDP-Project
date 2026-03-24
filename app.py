@@ -5,139 +5,120 @@ from PIL import Image
 import torchvision.transforms.functional as TF
 import segmentation_models_pytorch as smp
 from scipy.ndimage import label
-import matplotlib.pyplot as plt
 import os
 import gdown
-import tifffile as tiff
 
 # --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="SOTA Urban Change AI", page_icon="🛰️", layout="wide")
+st.set_page_config(page_title="LEVIR-CD+ Change Detection", page_icon="🏙️", layout="wide")
 
-st.title("🛰️ High-Resolution Urban Change Detection")
-st.markdown("Processing large-scale mosaic imagery using Sliding Window Tiling.")
+st.title("🛰️ SOTA Urban Change Detection")
+st.markdown("""
+### DeepLabV3+ with EfficientNet-b4 Backbone
+Upload native high-resolution **LEVIR-CD+** images (Time 1 and Time 2) in **PNG** format to detect new construction.
+""")
 
-# --- 2. ROBUST IMAGE LOADER & NORMALIZER ---
-def load_satellite_image(file):
-    try:
-        img_array = tiff.imread(file)
-    except Exception:
-        return np.array(Image.open(file).convert("RGB"))
-    
-    # Slice to RGB if multi-band (keeping first 3)
-    if len(img_array.shape) == 3 and img_array.shape[-1] > 3:
-        img_array = img_array[:, :, :3]
-        
-    # Normalization for 16-bit imagery
-    if img_array.dtype == np.uint16:
-        img_array = (img_array / 65535.0 * 255).astype(np.uint8)
-    
-    # Handle Grayscale
-    if len(img_array.shape) == 2:
-        img_array = np.stack([img_array]*3, axis=-1)
-        
-    return img_array
-
-# --- 3. MODEL LOADER (FROM GOOGLE DRIVE) ---
+# --- 2. RESTORED MODEL LOADER (WITH DRIVE FETCH) ---
 @st.cache_resource
 def load_model():
     model_path = 'best_levir_deeplabv3_effb4.pth'
+    
+    # Keeping your existing Google Drive ID for the champion DeepLabV3+ model
     file_id = '1iV91GcRBVgfu39IA4CVkQ4rH_iw6W8PV' 
     
+    # Download weights if they don't exist on the server
     if not os.path.exists(model_path):
-        with st.spinner("Downloading AI weights from Cloud..."):
+        with st.spinner("Downloading 150MB DeepLabV3+ model weights from Google Drive... (This takes ~30s on first boot)"):
             gdown.download(id=file_id, output=model_path, quiet=False)
 
+    # Reinitialize the champion architecture
     model = smp.DeepLabV3Plus(
         encoder_name="efficientnet-b4",
-        encoder_weights=None, 
+        encoder_weights=None, # None because we are loading custom weights
         in_channels=6,
         classes=1,
     )
+    
+    # Load weights onto the CPU (required for free Streamlit Community Cloud)
     model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     model.eval()
     return model
 
-model = load_model()
+with st.spinner("Initializing System & Checking Weights..."):
+    model = load_model()
 
-# --- 4. THE TILING ENGINE ---
-def run_tiled_inference(img1, img2, model, tile_size=512):
-    h, w, _ = img1.shape
-    
-    # Create an empty mask for the results
-    full_mask = np.zeros((h, w), dtype=np.uint8)
-    
-    # Calculate total tiles for progress bar
-    steps_y = range(0, h, tile_size)
-    steps_x = range(0, w, tile_size)
-    total_tiles = len(steps_y) * len(steps_x)
-    
-    progress_bar = st.progress(0)
-    current_tile = 0
-    
-    with torch.no_grad():
-        for y in steps_y:
-            for x in steps_x:
-                # Extract tiles (handling edges)
-                end_y = min(y + tile_size, h)
-                end_x = min(x + tile_size, w)
-                
-                tile1 = img1[y:end_y, x:end_x]
-                tile2 = img2[y:end_y, x:end_x]
-                
-                # Resize tile to exactly 512x512 for the model
-                t1_p = TF.to_tensor(Image.fromarray(tile1).resize((tile_size, tile_size)))
-                t2_p = TF.to_tensor(Image.fromarray(tile2).resize((tile_size, tile_size)))
-                
-                input_tensor = torch.cat([t1_p, t2_p], dim=0).unsqueeze(0)
-                
-                # Inference
-                output = model(input_tensor)
-                pred = (torch.sigmoid(output) > 0.5).squeeze().cpu().numpy().astype(np.uint8)
-                
-                # Resize back to original tile dimensions and stitch
-                pred_resized = np.array(Image.fromarray(pred).resize((end_x - x, end_y - y)))
-                full_mask[y:end_y, x:end_x] = pred_resized
-                
-                current_tile += 1
-                progress_bar.progress(current_tile / total_tiles)
-                
-    return full_mask
+# --- 3. SIDEBAR UPLOADERS (NORMAL FORMAT) ---
+st.sidebar.header("Data Input Panel")
+st.sidebar.info("Upload standard high-res PNG images.")
 
-# --- 5. SIDEBAR ---
-st.sidebar.header("Data Input")
-file1 = st.sidebar.file_uploader("Time 1 (Before)", type=['png', 'jpg', 'tif'])
-file2 = st.sidebar.file_uploader("Time 2 (After)", type=['png', 'jpg', 'tif'])
+file1 = st.sidebar.file_uploader("Upload Time 1 (Before)", type=['png', 'jpg', 'jpeg'])
+file2 = st.sidebar.file_uploader("Upload Time 2 (After)", type=['png', 'jpg', 'jpeg'])
 
-# --- 6. MAIN APP LOGIC ---
+# --- 4. MAIN APPLICATION LOGIC ---
 if file1 and file2:
-    img1 = load_satellite_image(file1)
-    img2 = load_satellite_image(file2)
     
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("Mosaic: Time 1")
-        st.image(img1, use_column_width=True)
-    with c2:
-        st.subheader("Mosaic: Time 2")
-        st.image(img2, use_column_width=True)
+    # Load images immediately for display
+    image1 = Image.open(file1).convert("RGB")
+    image2 = Image.open(file2).convert("RGB")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Time 1 (Before)")
+        st.image(image1, use_column_width=True)
+    with col2:
+        st.subheader("Time 2 (After)")
+        st.image(image2, use_column_width=True)
         
-    if st.button("🚀 Analyze Full Mosaic", use_container_width=True):
-        st.info("Large Mosaic detected. Running Tiled Analysis (This preserves building-level detail).")
+    if st.button("🚀 Run Analysis", use_container_width=True):
         
-        final_mask = run_tiled_inference(img1, img2, model)
-        
-        # Calculate Metrics
-        _, num_buildings = label(final_mask)
-        area = np.sum(final_mask) * 0.25 # Based on LEVIR-CD resolution
-        
-        st.divider()
-        m1, m2 = st.columns(2)
-        m1.metric("Total Buildings Detected", num_buildings)
-        m2.metric("Total Urbanization Area", f"{area:,.1f} m²")
-        
-        st.subheader("Global Change Mask")
-        st.image(final_mask * 255, use_column_width=True, clamp=True)
-        
-        st.success("Analysis Complete!")
+        with st.spinner("Processing 6-Channel Early Fusion Tensor & Running Native Inference..."):
+            
+            # --- RESTORED NATIVE INFERENCE PIPELINE ---
+            
+            # 1. Resize images to 512x512. Model must infer at training dimension.
+            # This handles any input dimension and rescales it to the native model scale.
+            process_size = (512, 512)
+            t1 = TF.resize(image1, process_size)
+            t2 = TF.resize(image2, process_size)
+            
+            # 2. Convert to tensors
+            t1_tensor = TF.to_tensor(t1)
+            t2_tensor = TF.to_tensor(t2)
+            
+            # 3. Stack into 6 channels and add Batch Dimension [1, 6, 512, 512]
+            input_tensor = torch.cat([t1_tensor, t2_tensor], dim=0).unsqueeze(0)
+            
+            # 4. Direct Inference (Normal Format - no tiling)
+            with torch.no_grad():
+                output = model(input_tensor)
+                # Sigmoid to convert to probabilities, threshold at 0.5
+                pred_mask = torch.sigmoid(output) > 0.5
+            
+            # Post-Processing: Convert back to Numpy
+            pred_mask_np = pred_mask.squeeze().cpu().numpy().astype(np.uint8)
+            
+            # --- URBANIZATION METRICS ALGORITHMS ---
+            # 1. Count Buildings (Connected Components)
+            labeled_mask, num_buildings = label(pred_mask_np)
+            
+            # 2. Calculate Area
+            # LEVIR-CD+ resolution is ~0.5 meters per pixel. 1 pixel = 0.25 sq meters.
+            total_changed_pixels = np.sum(pred_mask_np)
+            estimated_sq_meters = total_changed_pixels * 0.25
+            
+            # --- DISPLAY RESULTS ---
+            st.divider()
+            st.subheader("📊 Analysis Results")
+            
+            # Display Metrics dynamically
+            m1, m2, m3 = st.columns(3)
+            m1.metric(label="New Buildings Detected", value=num_buildings)
+            m2.metric(label="Changed Pixels", value=f"{total_changed_pixels:,}")
+            m3.metric(label="Est. Urbanization Area", value=f"{estimated_sq_meters:,.1f} m²")
+            
+            # Display Prediction Mask in black and white
+            st.subheader("DeepLabV3+ Change Mask")
+            st.image(pred_mask_np * 255, use_column_width=True, clamp=True)
+            
+            st.success("Analysis Complete! Ready for next upload.")
 else:
-    st.info("👈 Upload your satellite mosaics to begin.")
+    st.info("👈 Please upload both LEVIR-CD+ PNG images to begin.")
