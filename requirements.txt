@@ -1,0 +1,8 @@
+streamlit==1.32.0
+torch==2.2.1
+torchvision==0.17.1
+segmentation-models-pytorch==0.3.3
+Pillow==10.2.0
+numpy==1.26.4
+scipy==1.12.0
+matplotlib==3.8.3
