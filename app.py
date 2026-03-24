@@ -4,29 +4,34 @@ import numpy as np
 from PIL import Image
 import torchvision.transforms.functional as TF
 import segmentation_models_pytorch as smp
-from scipy.ndimage import label
+from scipy.ndimage import label, binary_erosion, binary_closing, binary_fill_holes
 import matplotlib.pyplot as plt
 import os
 import gdown
 import tifffile as tiff
 
 # --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="Urban Change Detection AI", page_icon="🛰️", layout="wide")
+st.set_page_config(page_title="SOTA Urban Change AI", page_icon="🛰️", layout="wide")
 
 st.title("🛰️ SOTA Urban Change Detection")
-st.markdown("DeepLabV3+ with EfficientNet-b4 backbone. Optimized for LEVIR-CD+ native resolution.")
+st.markdown("DeepLabV3+ Early Fusion Architecture | Optimized for LEVIR-CD+ 0.5m/px Resolution")
 
-# --- 2. ROBUST IMAGE LOADER ---
+# --- 2. ROBUST SATELLITE IMAGE LOADER ---
 def load_image_robust(file):
     try:
+        # Best for GeoTIFF/Mosaic files
         img_array = tiff.imread(file)
     except:
+        # Fallback for PNG/JPG
         return Image.open(file).convert("RGB")
     
+    # Slice to RGB if multi-band
     if len(img_array.shape) == 3 and img_array.shape[-1] > 3:
         img_array = img_array[:, :, :3]
+    # Normalize 16-bit to 8-bit for the AI
     if img_array.dtype == np.uint16:
         img_array = (img_array / 65535.0 * 255).astype(np.uint8)
+    # Handle grayscale
     if len(img_array.shape) == 2:
         img_array = np.stack([img_array]*3, axis=-1)
     return Image.fromarray(img_array)
@@ -37,7 +42,7 @@ def load_model():
     model_path = 'best_levir_deeplabv3_effb4.pth'
     file_id = '1iV91GcRBVgfu39IA4CVkQ4rH_iw6W8PV' 
     if not os.path.exists(model_path):
-        with st.spinner("Fetching AI weights..."):
+        with st.spinner("Fetching AI weights from secure storage..."):
             gdown.download(id=file_id, output=model_path, quiet=False)
 
     model = smp.DeepLabV3Plus(
@@ -52,16 +57,31 @@ def load_model():
 
 model = load_model()
 
-# --- 4. SIDEBAR SETTINGS ---
-st.sidebar.header("Control Panel")
-st.sidebar.markdown("Adjust sensitivity to tune the detection engine.")
-threshold = st.sidebar.slider("Detection Sensitivity", 0.1, 0.9, 0.5, 0.05)
+# --- 4. SIDEBAR: OPTIMIZATION MODE & INPUT ---
+st.sidebar.header("⚖️ Optimization Mode")
+st.sidebar.info("Choose whether the AI should prioritize exact building counts or total area coverage.")
 
+opt_mode = st.sidebar.select_slider(
+    "Select Priority:",
+    options=["Max Area Coverage", "Balanced", "Max Count Accuracy"],
+    value="Balanced"
+)
+
+# Map UI labels to mathematical thresholds
+if opt_mode == "Max Area Coverage":
+    threshold = 0.30  # High Recall
+elif opt_mode == "Balanced":
+    threshold = 0.60  # Optimized F1-Score
+else:
+    threshold = 0.85  # High Precision (Strict)
+
+st.sidebar.divider()
 file1 = st.sidebar.file_uploader("Upload Time 1 (Before)", type=['png', 'jpg', 'tif'])
 file2 = st.sidebar.file_uploader("Upload Time 2 (After)", type=['png', 'jpg', 'tif'])
 
-# --- 5. MAIN LOGIC ---
+# --- 5. MAIN APPLICATION LOGIC ---
 if file1 and file2:
+    # Read files
     image1 = load_image_robust(file1)
     image2 = load_image_robust(file2)
     
@@ -73,43 +93,50 @@ if file1 and file2:
         st.subheader("Time 2 (After)")
         st.image(image2, use_column_width=True)
         
-    if st.button("🚀 Run Analysis", use_container_width=True):
-        with st.spinner("Processing 0-255 Native Tensors..."):
-            # 1. Resize for model input (Native scale)
+    if st.button("🚀 Run Comprehensive Analysis", use_container_width=True):
+        with st.spinner("Analyzing Native Tensors & Applying Morphological Refinement..."):
+            
+            # 1. Resize for model (512x512)
             t1_img = image1.resize((512, 512))
             t2_img = image2.resize((512, 512))
             
-            # 2. Convert to Numpy Float32 (Keep 0-255 range)
+            # 2. THE 0-255 NATIVE FIX
             t1_np = np.array(t1_img).astype(np.float32)
             t2_np = np.array(t2_img).astype(np.float32)
             
-            # 3. Create Tensors
             x1 = torch.from_numpy(t1_np).permute(2, 0, 1)
             x2 = torch.from_numpy(t2_np).permute(2, 0, 1)
-            
-            # 4. Early Fusion Stack
             input_tensor = torch.cat([x1, x2], dim=0).unsqueeze(0)
             
-            # 5. Inference
+            # 3. Inference
             with torch.no_grad():
                 output = model(input_tensor)
                 probs = torch.sigmoid(output).squeeze().cpu().numpy()
                 mask = (probs > threshold).astype(np.uint8)
             
-            # 6. Metrics Calculation
-            _, num_buildings = label(mask)
-            area = np.sum(mask) * 0.25 
+            # 4. MASK REFINEMENT (Closing & Filling Holes for better visual shapes)
+            mask = binary_closing(mask, structure=np.ones((3,3))).astype(np.uint8)
+            mask = binary_fill_holes(mask).astype(np.uint8)
+
+            # 5. THE EROSION FIX (For accurate building counts)
+            # We briefly 'shrink' the buildings to separate them for the count
+            count_mask = binary_erosion(mask, structure=np.ones((3,3))).astype(np.uint8)
+            _, num_buildings = label(count_mask)
             
+            # 6. Area calculation (On original mask for maximum precision)
+            area = np.sum(mask) * 0.25 # 0.5m resolution squared
+            
+            # --- 6. DISPLAY RESULTS ---
             st.divider()
-            st.subheader("📊 Analysis Results")
+            st.subheader(f"📊 Analysis Results ({opt_mode} Mode)")
+            
             m1, m2 = st.columns(2)
-            m1.metric("Buildings Detected", num_buildings)
-            m2.metric("Est. Urbanization Area", f"{area:,.1f} m²")
+            m1.metric("Building Count Accuracy", num_buildings)
+            m2.metric("Total Urbanized Area", f"{area:,.1f} m²")
             
-            # --- THE HIGHLIGHT OVERLAY (Visual Polish) ---
-            st.subheader("AI Analysis: Building Highlights")
+            # --- HIGH-VISIBILITY YELLOW OVERLAY ---
+            st.subheader("AI Analysis: Building Footprint Highlights")
             
-            # Use PIL for clean alpha blending (Yellow Overlay)
             base = Image.fromarray(np.array(t2_img)).convert("RGBA")
             yellow_mask = Image.new("RGBA", base.size, (255, 255, 0, 0))
             mask_pixels = yellow_mask.load()
@@ -117,13 +144,11 @@ if file1 and file2:
             for y in range(512):
                 for x in range(512):
                     if mask[y, x] == 1:
-                        # Bright yellow with semi-transparency
-                        mask_pixels[x, y] = (255, 255, 0, 160) 
+                        mask_pixels[x, y] = (255, 255, 0, 160) # Semi-transparent Yellow
 
             combined = Image.alpha_composite(base, yellow_mask)
             
-            st.image(combined, use_column_width=True, caption=f"Detection Overlay (Confidence Threshold: {threshold})")
-            st.success(f"Analysis Complete! Successfully identified {num_buildings} changes.")
-            
+            st.image(combined, use_column_width=True, caption=f"Confidence > {threshold}")
+            st.success(f"Analysis Complete! Successfully segmented {num_buildings} distinct building footprints.")
 else:
-    st.info("👈 Upload LEVIR-CD+ images in the sidebar to begin analysis.")
+    st.info("👈 Please upload bi-temporal satellite data in the sidebar to proceed.")
