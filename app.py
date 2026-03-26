@@ -11,7 +11,7 @@ import gdown
 import tifffile as tiff
 
 # --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="SOTA Urban Change AI", page_icon="🛰️", layout="wide")
+st.set_page_config(page_title="Semantic Segmentation Urban Change Detection", page_icon="🛰️", layout="wide")
 
 st.title("🛰️ SOTA Urban Change Detection")
 st.markdown("### DeepLabV3+ Early Fusion | EfficientNet-b4 Backbone")
@@ -105,7 +105,7 @@ if file1 and file2:
         st.subheader("Time 2 (After)")
         st.image(image2, use_column_width=True)
         
-    if st.button("🚀 Run Comprehensive Change Analysis", use_container_width=True):
+    if st.button("Run Comprehensive Change Analysis", use_container_width=True):
         with st.spinner(f"Inference at {threshold} Threshold..."):
             
             # --- PREPROCESSING (NATIVE SCALING) ---
@@ -171,4 +171,4 @@ if file1 and file2:
             st.success("Analysis successful. Building instances isolated via morphological erosion.")
             
 else:
-    st.info("👈 Please upload the satellite image pair in the Control Panel to begin.")
+    st.info(" Please upload the satellite image pair in the Control Panel to begin.")
