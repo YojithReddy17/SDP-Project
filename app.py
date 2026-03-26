@@ -11,7 +11,7 @@ import gdown
 import tifffile as tiff
 
 # --- 1. PAGE CONFIGURATION ---
-st.set_page_config(page_title="Semantic Segmentation Urban Change Detection", page_icon="🛰️", layout="wide")
+st.set_page_config(page_title=" Semantic Segmentation Urban Change Detection", page_icon="🛰️", layout="wide")
 
 st.title("🛰️ SOTA Urban Change Detection")
 st.markdown("### DeepLabV3+ Early Fusion | EfficientNet-b4 Backbone")
